@@ -1,0 +1,23 @@
+services:
+  mcp-statistikportal:
+    image: ghcr.io/dcc-bs/mcp-statistikportal:${IMAGE_TAG:-0.1.0}
+    container_name: ${CONTAINER_NAME:-mcp-statistikportal}
+    restart: unless-stopped
+    ports:
+      - "${HOST_PORT:-8000}:8000"
+    environment:
+      STATISTIK_PORTAL_DOMAIN: ${STATISTIK_PORTAL_DOMAIN:-statistik.bs.ch}
+      INDEX_CACHE_TTL: ${INDEX_CACHE_TTL:-3600}
+      # Optional portal-wide search (search_portal tool). Search-only key!
+      MEILISEARCH_URL: ${MEILISEARCH_URL:-}
+      MEILISEARCH_KEY: ${MEILISEARCH_KEY:-}
+      PORT: "8000"
+      # Host header allowed past DNS-rebinding protection; add the public
+      # hostname(s) this deployment is served under (with :* port wildcard).
+      MCP_ALLOWED_HOSTS: ${MCP_ALLOWED_HOSTS:-}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz', timeout=5)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
