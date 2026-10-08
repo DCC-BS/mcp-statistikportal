@@ -7,10 +7,13 @@ import time
 from pathlib import Path
 
 import httpx
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
-from starlette.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import HTMLResponse, JSONResponse
 from starlette.routing import Route
+
+import api_docs
 
 
 def _read_env_file(path: Path) -> dict[str, str]:
@@ -70,7 +73,25 @@ def _transport_security() -> TransportSecuritySettings:
     )
 
 
-mcp = FastMCP(
+class RelaxedAcceptHeaderMiddleware(BaseHTTPMiddleware):
+    """Tolerate JSON-RPC clients that send incomplete Accept headers.
+
+    The streamable HTTP transport rejects POST requests without an Accept
+    header listing both application/json and text/event-stream (406), which
+    plain JSON-RPC clients routinely omit. Rewrite those Accept headers to
+    what the transport requires before the request reaches it."""
+
+    async def dispatch(self, request, call_next):
+        if request.method == "POST":
+            accept = request.headers.get("accept", "")
+            if "text/event-stream" not in accept or "application/json" not in accept:
+                request.scope["headers"] = [
+                    (k, v) for k, v in request.scope["headers"] if k.lower() != b"accept"
+                ] + [(b"accept", b"application/json, text/event-stream")]
+        return await call_next(request)
+
+
+mcp = MCPServer(
     DOMAIN,
     instructions=(
         "Statistics of the canton of Basel-Stadt (Statistisches Amt Basel-Stadt). "
@@ -78,10 +99,13 @@ mcp = FastMCP(
         "explanation with get_indicator, then load the time series with "
         "get_indicator_data. Always cite the source (quellenangabe) and link portal_url."
     ),
-    stateless_http=True,
-    streamable_http_path="/mcp",
-    transport_security=_transport_security(),
 )
+
+MCP_HTTP_SETTINGS = {
+    "streamable_http_path": "/mcp",
+    "stateless_http": True,
+    "transport_security": _transport_security(),
+}
 
 
 async def fetch(endpoint: str, params: dict[str, str | int] | None = None) -> dict | list:
@@ -456,11 +480,39 @@ def _healthz(request) -> JSONResponse:
     return JSONResponse({"status": "ok"})
 
 
+def _index(request) -> JSONResponse:
+    return JSONResponse(
+        {
+            "server": DOMAIN,
+            "status": "ok",
+            "transport": "mcp-streamable-http",
+            "endpoints": {
+                "mcp": "/mcp",
+                "health": "/healthz",
+                "openapi": "/openapi.json",
+                "docs": "/docs",
+            },
+        }
+    )
+
+
+def _openapi(request) -> JSONResponse:
+    return JSONResponse(api_docs.build_openapi(DOMAIN, mcp._tool_manager.list_tools()))
+
+
+def _docs(request) -> HTMLResponse:
+    return HTMLResponse(api_docs.docs_page(DOMAIN))
+
+
 def create_http_app():
     """Build a fresh ASGI app. Call once per process; tests create one per case
     because the underlying session manager may run only once per instance."""
-    app = mcp.streamable_http_app()
+    app = mcp.streamable_http_app(**MCP_HTTP_SETTINGS)
+    app.add_middleware(RelaxedAcceptHeaderMiddleware)
+    app.router.routes.insert(0, Route("/", _index))
     app.router.routes.insert(0, Route("/healthz", _healthz))
+    app.router.routes.insert(0, Route("/openapi.json", _openapi))
+    app.router.routes.insert(0, Route("/docs", _docs))
     return app
 
 

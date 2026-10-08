@@ -63,19 +63,76 @@ docker build -f Dockerfile -t mcp-statistikportal .
 docker run --rm -p 8000:8000 mcp-statistikportal
 ```
 
-Healthcheck: `GET /healthz -> {"status":"ok"}`. MCP endpoint: `/mcp`.
+The MCP endpoint is mounted at `/mcp` (streamable HTTP).
 
-> **Remote hosting requires `MCP_ALLOWED_HOSTS`** when DNS-rebinding protection
-> should be on: list the public hostname(s), e.g. `MCP_ALLOWED_HOSTS="mcp.bs.ch:*"`.
-> When unset, protection is disabled so any `Host` header is accepted.
+Healthcheck: `GET /healthz -> {"status":"ok"}`.
+
+### API reference
+
+The HTTP server exposes an OpenAPI description of the MCP endpoint with a
+rendered Swagger UI:
+
+- `GET /docs` — interactive reference (Swagger UI). Each tool appears as a
+  `tools/call` request schema with a working example you can execute against
+  the server via *Try it out*.
+- `GET /openapi.json` — the raw OpenAPI 3.1 spec.
+
+The spec is generated from the live MCP tool registry at request time, so new
+tools appear automatically (the optional `search_portal` shows up only when
+Meilisearch is configured). It covers all endpoints (`POST /mcp`,
+`GET /healthz`, `GET /`). Responses are `text/event-stream`; each `data:`
+frame carries a JSON-RPC message. The server is stateless — requests need no
+`initialize` handshake and no session id.
+
+Client compatibility: POST requests with incomplete `Accept` headers (e.g. only
+`application/json` or `*/*`) are rewritten to
+`application/json, text/event-stream` by a middleware before the transport
+validates them, so plain JSON-RPC clients work unmodified. `GET /` returns a
+JSON status page (server, transport, endpoint links) instead of holding an SSE
+connection open — clients expecting a traditional SSE handshake get an
+immediate, meaningful response.
+
+> **Remote hosting requires `MCP_ALLOWED_HOSTS`.** The MCP HTTP endpoint has
+> DNS-rebinding protection on by default and, without config, accepts only
+> localhost `Host` headers — a remote deploy would get `421 Invalid Host header`.
+> When the server is reachable via a public hostname, list it (comma-separated,
+> port-wildcard allowed): `MCP_ALLOWED_HOSTS="mcp.bs.ch:*"`. When unset,
+> protection is disabled so any `Host` header is accepted.
 
 `compose.yml` pulls the published GHCR image: `docker compose up -d`.
 CI and publishing use the DCC reusable workflows, same as mcp-data-bs.
 
 ## Connecting clients
 
-- **ChatGPT / OpenWebUI**: add the hosted URL (e.g. `https://mcp.your-domain/mcp`), no auth.
-- **opencode / local stdio**:
+The snippets below are self-contained: stdio clients launch the server from
+GitHub via `uvx` (needs [uv](https://docs.astral.sh/uv/) installed), HTTP
+clients point at the hosted deployment.
+
+**Claude Desktop / Cursor** — add to `claude_desktop_config.json`
+(Claude Desktop → Settings → Developer → Edit Config) or `~/.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "statistik-bs": {
+      "command": "uvx",
+      "args": ["--from", "git+https://github.com/DCC-BS/mcp-statistikportal", "statistik-bs-mcp"]
+    }
+  }
+}
+```
+
+**OpenWebUI / ChatGPT** — point at the streamable HTTP endpoint
+`https://<hosted-domain>/mcp` (no auth):
+
+- OpenWebUI: Settings → Tools → add `https://<hosted-domain>/mcp`
+- ChatGPT (developer-mode connector): Settings → Connectors → Create → add
+  `https://<hosted-domain>/mcp`; the interactive API reference lives at
+  `https://<hosted-domain>/docs`.
+
+### Other clients
+
+- **opencode**: add to OpenCode config:
   ```json
   {
     "mcpServers": {
@@ -85,6 +142,10 @@ CI and publishing use the DCC reusable workflows, same as mcp-data-bs.
       }
     }
   }
+  ```
+- **uvx** (anywhere): all settings are optional; defaults work out of the box.
+  ```bash
+  uvx --from git+https://github.com/DCC-BS/mcp-statistikportal statistik-bs-mcp
   ```
 
 ## Tools
