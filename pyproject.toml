@@ -6,15 +6,15 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "httpx>=0.28.1",
-    "mcp[cli]>=1.26.0,<2",
-    "uvicorn>=0.53.0",
+    "mcp[cli]>=2.3.0",
+    "uvicorn>=0.54.0",
 ]
 
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
-    "ruff>=0.15.10",
+    "ruff>=0.16.10",
 ]
 
 [project.scripts]
