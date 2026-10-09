@@ -8,6 +8,7 @@ from pathlib import Path
 
 import httpx
 from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import HTMLResponse, JSONResponse
@@ -109,11 +110,24 @@ MCP_HTTP_SETTINGS = {
 
 
 async def fetch(endpoint: str, params: dict[str, str | int] | None = None) -> dict | list:
-    async with httpx.AsyncClient(base_url=BASE_URL, timeout=30.0) as client:
-        response = await client.get(endpoint, params=params)
-        response.raise_for_status()
-        # Some source files carry a UTF-8 BOM, which json.loads rejects.
+    """GET from the portal. Failures are raised as ToolError with a reason the calling model can act on
+    (unknown id, portal down); any other exception would reach it only as "Error executing tool <name>"."""
+    try:
+        async with httpx.AsyncClient(base_url=BASE_URL, timeout=30.0) as client:
+            response = await client.get(endpoint, params=params)
+    except httpx.TimeoutException as exc:
+        raise ToolError(f"{DOMAIN} did not answer within 30 s") from exc
+    except httpx.HTTPError as exc:
+        raise ToolError(f"{DOMAIN} is not reachable: {type(exc).__name__}") from exc
+    if response.status_code == 404:
+        raise ToolError(f"not found on {DOMAIN}: {endpoint} (check the indicator id with search_indicators)")
+    if response.status_code >= 400:
+        raise ToolError(f"{DOMAIN} answered {response.status_code} for {endpoint}")
+    # Some source files carry a UTF-8 BOM, which json.loads rejects.
+    try:
         return json.loads(response.content.decode("utf-8-sig"))
+    except ValueError as exc:
+        raise ToolError(f"{DOMAIN} returned no JSON for {endpoint}") from exc
 
 
 # --- Indicator index -------------------------------------------------------
