@@ -150,10 +150,21 @@ clients point at the hosted deployment.
 
 ## Tools
 
+Tool descriptions are kept to 1-3 sentences on purpose (they cost tokens on every
+call of a small model). Every result that can be cited carries `title`,
+`portal_url` and `aktualisierungsdatum` (Stand).
+
 ### `search_indicators`
 Ranked search over the indicator index (title > subtitle > subtopic > topic/set >
-reading aid). German terms, umlauts may be written as `ae/oe/ue`. Filters:
-`thema`, `unterthema`, `kennzahlenset`, `raeumliche_gliederung`.
+reading aid). **Use German terms**; umlauts may be written `ä`, `ae` or `a`, and
+plural/case endings and compounds are tolerated (`Leerwohnungen` finds
+`Leerwohnungsquote`). Ties go to an exact title, then the shorter title, then the
+newer update. Filters: `thema`, `unterthema`, `kennzahlenset`,
+`raeumliche_gliederung`.
+
+Each hit has `id`, `title`, `subtitle`, `unit`, `aktualisierungsdatum`, `portal_url`.
+`match` is `all_terms`, `partial` (only some terms matched; hits list
+`matched_terms` and a `hint` explains) or `none`.
 
 ```
 search_indicators(search="Arbeitslosenquote")
@@ -161,20 +172,38 @@ search_indicators(search="Leerwohnungen", raeumliche_gliederung="Wohnviertel")
 search_indicators(kennzahlenset="Legislaturplan", limit=50)
 ```
 
+**Limitation:** the index holds the ~1,080 indicators shown in the Indikatorenportal,
+not all ~2,500 indicator files. The others (e.g. 10027) are only reachable by id
+via `get_indicator` / `get_indicator_data`; the portal offers no list of them
+(no sitemap entries, `children` ids are print variants). Use the optional
+`search_portal` for content outside the index.
+
 ### `get_indicator`
-Metadata of one indicator: reading aid (`lesehilfe`), explanations, sources,
-external links, spatial units, last update.
+Metadata of one indicator: `unit`, reading aid (`lesehilfe`), explanations,
+sources (`quellenangabe`), external links, spatial units, last update. HTML is
+converted to plain text.
 
 ```
-get_indicator(indicator_id=10027)
+get_indicator(indicator_id=5813)
 ```
 
 ### `get_indicator_data`
-Time series as `headers` + `rows` (numbers parsed). Resolves the shared data file
-(`data-id`) from the metadata. Long tables return the last `max_rows` rows.
+Values as `headers` + `rows` (numbers parsed; the portal delivers strings). Besides
+the table the result has `unit` (derived from `subtitle`, e.g. "in %" -> `%`,
+"Anzahl Personen" -> `Personen`, `null` if unclear), `subtitle`, `source`,
+`aktualisierungsdatum`, `portal_url`, `title`, and `notes` (erlaeuterungen +
+lesehilfe, at most 600 characters, so definitions and series breaks reach the
+model). If the table has a year/date column, `latest` = `{period, values}` holds the
+newest period that has numbers.
+
+The resolved shared data file (`data-id`) is used. Output is capped at about
+12,000 characters: the newest rows are kept, `truncated: true` and a `hint` say how
+to get more (`max_rows`, default 200, max 5000; the character cap still applies).
+`indicator_id` must be a positive integer (a string of digits is accepted);
+anything else gives a `ToolError` that points to `search_indicators`.
 
 ```
-get_indicator_data(indicator_id=7510, max_rows=24)
+get_indicator_data(indicator_id=5813, max_rows=24)
 ```
 
 ### `get_facets`

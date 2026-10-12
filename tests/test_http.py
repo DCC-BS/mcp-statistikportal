@@ -85,7 +85,12 @@ def test_openapi_request_schema_matches_tool():
     schema = spec["components"]["schemas"]["GetIndicatorRequest"]
     args = schema["properties"]["params"]["properties"]["arguments"]
     assert args == {
-        "properties": {"indicator_id": {"title": "Indicator Id", "type": "integer"}},
+        "properties": {
+            "indicator_id": {
+                "anyOf": [{"type": "integer"}, {"type": "string"}],
+                "title": "Indicator Id",
+            }
+        },
         "required": ["indicator_id"],
         "type": "object",
         "additionalProperties": False,
