@@ -52,6 +52,7 @@ Read from the environment first, else a local `.env` next to `main.py`
 | Variable                  | Default           | Meaning                                              |
 |---------------------------|-------------------|------------------------------------------------------|
 | `STATISTIK_PORTAL_DOMAIN` | `statistik.bs.ch` | Portal serving `/api/*` (e.g. a test host)           |
+| `STATISTIK_PORTAL_API_URL` | `https://<domain>` | Where the server fetches from, e.g. `http://statistik.bs.ch` inside the network; links in results stay `https://<domain>` |
 | `INDEX_CACHE_TTL`         | `3600`            | Seconds the indicator index is kept in memory        |
 | `MEILISEARCH_URL`         | –                 | Enables `search_portal` (together with the key)      |
 | `MEILISEARCH_KEY`         | –                 | **Search-only** key for the `product` index          |

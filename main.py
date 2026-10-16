@@ -50,6 +50,10 @@ DOMAIN = (
     .strip("/")
 )
 BASE_URL = f"https://{DOMAIN}"
+# Where the server fetches from; links in tool results keep using BASE_URL.
+# Set when the portal is reached differently from inside the deployment,
+# e.g. http://statistik.bs.ch where only port 80 is open internally.
+API_URL = _env("STATISTIK_PORTAL_API_URL", BASE_URL).rstrip("/")
 INDEX_PATH = "/indikatoren/metadata/portal/indikatoren.json"
 INDEX_CACHE_TTL = int(_env("INDEX_CACHE_TTL", "3600"))
 # Limits that keep tool output small enough for a ~30B model context.
@@ -124,7 +128,7 @@ async def fetch(
     """GET from the portal. Failures are raised as ToolError with a reason the calling model can act on
     (unknown id, portal down); any other exception would reach it only as "Error executing tool <name>"."""
     try:
-        async with httpx.AsyncClient(base_url=BASE_URL, timeout=30.0) as client:
+        async with httpx.AsyncClient(base_url=API_URL, timeout=30.0) as client:
             response = await client.get(endpoint, params=params)
     except httpx.TimeoutException as exc:
         raise ToolError(f"{DOMAIN} did not answer within 30 s") from exc
