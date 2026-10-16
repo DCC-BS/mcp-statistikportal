@@ -19,6 +19,8 @@ Punkt, der Meilisearch-Key (Sicherheit).
 | `/indikatoren/metadata/portal/indikatoren.json` | Volle Metadaten aller im Portal sichtbaren Indikatoren (1'077) | `search_indicators`, `get_facets` |
 | `/api/indikator-meta/{id}` | Metadaten eines Indikators (2'526 Dateien) | `get_indicator` |
 | `/api/indikator-data/{id}` | TSV → `{headers, rows}` (2'504 Dateien) | `get_indicator_data` |
+| `/api/webtabelle-data/{datei}.xlsx?sheet={n}` | Ein Blatt einer Webtabelle flach als `{headers, rows}` mit Blattliste, Titel, Fussnoten; Steckbrief als Merkmal/Wert (~220 Dateien) | `get_table` |
+| `/api/webtabelle/{datei}.xlsx?sheet={n}` | Dasselbe Blatt mit Formatierung (Zellen, `colspan`/`rowspan`) fürs Frontend; mit `&format=csv` als CSV | `csv_url` in `get_table` |
 | Meilisearch `product`-Index | Alle Produkte (Artikel, Tabellen, OGD, Karten, …) | `search_portal` (optional) |
 
 ## Beobachtungen
@@ -43,6 +45,16 @@ Punkt, der Meilisearch-Key (Sicherheit).
    `/indexes/*/settings`. Er sollte ersetzt werden durch einen Key, der nur die
    Aktion `search` erlaubt; der alte sollte widerrufen werden. Der MCP verwendet
    Meilisearch nur, wenn ein Key explizit konfiguriert ist.
+7. **Webtabellen** (Nachtrag 2026-09-24). Das Portal liest die Excel-Dateien pro
+   Aufruf vom Dateiserver, cacht sie (Revalidierung per ETag, max. 1×/Minute) und
+   liefert pro Anfrage ein Blatt. Zellen enthalten den angezeigten Text (`runs`),
+   `colspan`/`rowspan` und bei Zahlen den Rohwert `value` (Prozent als Anteil).
+   Seit 2026-10 macht das Portal die Tabellen in `/api/webtabelle-data` selbst flach
+   (mehrzeilige Köpfe als Spaltennamen, Gruppenzeilen als Spalte `Gruppe`, leere
+   Köpfe als `Spalte n`). Der MCP nutzt diesen Endpunkt und rundet nur noch Rohwerte
+   auf 6 signifikante Stellen. `subtitle` fehlt dort; in den geprüften Tabellen war
+   er leer, Einheiten stehen im Titel. Auffindbar sind Webtabellen nur über
+   `search_portal`, also nur mit Meilisearch-Key.
 
 ## Empfohlene API-Erweiterungen (Priorität)
 
@@ -60,5 +72,7 @@ Punkt, der Meilisearch-Key (Sicherheit).
 6. **`/api/search?q=`**: serverseitiger Proxy auf Meilisearch. Dann braucht weder
    das Frontend noch der MCP einen Key.
 7. Optional: Einheit/Datentyp pro Spalte in `indikator-data`.
+8. **`/api/webtabellen`**: Liste aller Webtabellen (Datei, Code, Titel, Thema,
+   Produkt-ID). Dann sind Webtabellen auch ohne Meilisearch auffindbar.
 
 Mit 4–6 würde der MCP deutlich einfacher: kein lokaler Index-Cache, kein Key.

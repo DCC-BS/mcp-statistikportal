@@ -24,6 +24,7 @@ _REQUEST_EXAMPLES: dict[str, dict] = {
     "get_indicator": {"indicator_id": 10027},
     "get_indicator_data": {"indicator_id": 7510, "max_rows": 10},
     "get_facets": {"facet": "thema"},
+    "get_table": {"table": "t03.4.04", "max_rows": 12, "from_end": True},
     "search_portal": {"search": "bevölkerung", "limit": 5},
 }
 

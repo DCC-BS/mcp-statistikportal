@@ -102,7 +102,10 @@ mcp = MCPServer(
         "Statistics of the canton of Basel-Stadt (Statistisches Amt Basel-Stadt). "
         "Find indicators with search_indicators (German terms work best), read their "
         "explanation with get_indicator, then load the time series with "
-        "get_indicator_data. Always cite the source (quellenangabe) and link portal_url."
+        "get_indicator_data. For the web tables of the statistical yearbook (Excel "
+        "tables with several sheets) use get_table, e.g. with a table found by "
+        "search_portal. Always cite the source (quellenangabe or the Steckbrief) and "
+        "link portal_url or download_url."
     ),
 )
 
@@ -113,7 +116,11 @@ MCP_HTTP_SETTINGS = {
 }
 
 
-async def fetch(endpoint: str, params: dict[str, str | int] | None = None) -> dict | list:
+async def fetch(
+    endpoint: str,
+    params: dict[str, str | int] | None = None,
+    not_found_hint: str = "check the indicator id with search_indicators",
+) -> dict | list:
     """GET from the portal. Failures are raised as ToolError with a reason the calling model can act on
     (unknown id, portal down); any other exception would reach it only as "Error executing tool <name>"."""
     try:
@@ -124,9 +131,7 @@ async def fetch(endpoint: str, params: dict[str, str | int] | None = None) -> di
     except httpx.HTTPError as exc:
         raise ToolError(f"{DOMAIN} is not reachable: {type(exc).__name__}") from exc
     if response.status_code == 404:
-        raise ToolError(
-            f"not found on {DOMAIN}: {endpoint} (check the indicator id with search_indicators)"
-        )
+        raise ToolError(f"not found on {DOMAIN}: {endpoint} ({not_found_hint})")
     if response.status_code >= 400:
         raise ToolError(f"{DOMAIN} answered {response.status_code} for {endpoint}")
     # Some source files carry a UTF-8 BOM, which json.loads rejects.
@@ -612,6 +617,170 @@ async def get_facets(facet: str = "thema") -> dict:
     }
 
 
+# --- Web tables (Webtabellen) ------------------------------------------------
+
+WEBTABELLE_FILE_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*\.xlsx$", re.IGNORECASE)
+_TABLE_CODE_RE = re.compile(r"^t\d{2}[.-]\d+[.-]\d+$", re.IGNORECASE)
+
+
+def _webtabelle_file(table: str) -> str:
+    """Accept a file name, a table code ("t06.1.05") or a download URL."""
+    name = table.strip().split("?")[0].split("#")[0].rstrip("/").rsplit("/", 1)[-1]
+    if _TABLE_CODE_RE.match(name):
+        name = name.replace(".", "-")
+    if not name.lower().endswith(".xlsx"):
+        name += ".xlsx"
+    if not WEBTABELLE_FILE_RE.match(name):
+        raise ToolError(
+            f"Invalid web table {table!r}, expected a file name such as 't06-1-05.xlsx', "
+            "a table code such as 't06.1.05' or the url of a search_portal hit."
+        )
+    return name.lower()
+
+
+def _round(value):
+    # Raw Excel values carry full float precision (560.387096774194) where the
+    # table shows "560"; 6 significant digits keep the meaning at fewer tokens.
+    if isinstance(value, float):
+        return int(value) if value.is_integer() else float(f"{value:.6g}")
+    return value
+
+
+async def _fetch_webtabelle(file: str, sheet: int | None = None) -> dict:
+    """Flat sheet from the portal (headers + rows, joined header labels, a
+    "Gruppe" column for group rows), see statistikportal webtabelle-data."""
+    params = {"sheet": sheet} if sheet is not None else None
+    return await fetch(
+        f"/api/webtabelle-data/{file}",
+        params,
+        not_found_hint="no such web table; find tables with search_portal, type 'Tabelle'",
+    )
+
+
+def _sheet_index(sheets: list[dict], wanted: str) -> int:
+    names = [str(s.get("name")) for s in sheets]
+    if wanted in names:
+        return names.index(wanted)
+    folded = [name.casefold() for name in names]
+    if wanted.casefold() in folded:
+        return folded.index(wanted.casefold())
+    if wanted.isdigit() and int(wanted) < len(sheets):
+        return int(wanted)
+    raise ToolError(f"Unknown sheet {wanted!r}. Available: {', '.join(names)}")
+
+
+def _index_of(data: dict) -> int:
+    return next(i for i, s in enumerate(data["sheets"]) if s.get("name") == data.get("sheet"))
+
+
+def _steckbrief(data: dict) -> dict:
+    """Steckbrief rows ("Merkmal", "Wert") as label -> text."""
+    return {label: value for label, value in data.get("rows") or [] if label}
+
+
+@mcp.tool(
+    title="Get Web Table",
+    description=(
+        "Get a web table (Excel table of the statistical yearbook) by file name, code "
+        "(t06.1.05) or search_portal url: one sheet as columns + rows, footnotes, source "
+        "and last update. Percentages are fractions (0.123 = 12.3%). Time series start "
+        "with the oldest year; use from_end=True for recent values. Cite source and "
+        "download_url."
+    ),
+)
+async def get_table(
+    table: str,
+    sheet: str | None = None,
+    max_rows: int = 200,
+    offset: int = 0,
+    from_end: bool = False,
+) -> dict:
+    """
+    Args:
+        table: File name ("t06-1-05.xlsx"), table code ("t06.1.05") or download url.
+        sheet: Sheet name (e.g. "2024", "Riehen") or index from sheets. Default: first data sheet.
+        max_rows: Rows to return (default 200, max 5000). Output is additionally capped
+            at about 12,000 characters.
+        offset: Rows to skip, from the start (or from the end with from_end).
+        from_end: Return the last rows instead of the first ones.
+    """
+    file = _webtabelle_file(table)
+    data = await _fetch_webtabelle(file)
+    sheets = data.get("sheets") or []
+
+    if sheet is not None and str(sheet).strip():
+        index = _sheet_index(sheets, str(sheet).strip())
+        if index != _index_of(data):
+            data = await _fetch_webtabelle(file, index)
+    index = _index_of(data)
+    kind = sheets[index].get("kind")
+
+    info = next((i for i, s in enumerate(sheets) if s.get("kind") == "steckbrief"), None)
+    if kind == "steckbrief":
+        steckbrief = _steckbrief(data)
+    elif info is not None:
+        steckbrief = _steckbrief(await _fetch_webtabelle(file, info))
+    else:
+        steckbrief = {}
+
+    result = {
+        "file": file,
+        "title": data.get("title"),
+        "code": data.get("code"),
+        "sheet": data.get("sheet"),
+        # Citation, as for indicators: source and "Stand" come from the Steckbrief.
+        "source": steckbrief.get("Datenquelle"),
+        "aktualisierungsdatum": steckbrief.get("Letzte Aktualisierung"),
+        "download_url": f"{BASE_URL}/files/webtabellen/{file}",
+        "sheets": [
+            {"index": i, "name": s.get("name"), "kind": s.get("kind")} for i, s in enumerate(sheets)
+        ],
+        "steckbrief": steckbrief,
+    }
+    if kind != "table":
+        return result
+
+    rows = [[_round(value) for value in row] for row in data.get("rows") or []]
+    total = len(rows)
+    max_rows = max(1, min(max_rows, 5000))
+    offset = max(0, offset)
+    end = max(0, total - offset) if from_end else min(total, offset + max_rows)
+    start = max(0, end - max_rows) if from_end else min(offset, total)
+    result.update(
+        {
+            "csv_url": f"{BASE_URL}/api/webtabelle/{file}?sheet={index}&format=csv",
+            "notes": data.get("notes") or [],
+            "columns": data.get("headers") or [],
+            "total_rows": total,
+        }
+    )
+
+    # Keep the rows that fit the character budget, trimming from the far side
+    # (the oldest rows when reading from the end).
+    window = rows[start:end]
+    budget = DATA_MAX_CHARS - len(json.dumps(result, ensure_ascii=False)) - 200
+    kept = 0
+    for row in reversed(window) if from_end else window:
+        budget -= len(json.dumps(row, ensure_ascii=False)) + 2
+        if budget < 0 and kept:
+            break
+        kept += 1
+    if from_end:
+        start = end - kept
+    else:
+        end = start + kept
+
+    result["rows"] = rows[start:end]
+    result["first_row"] = start
+    result["truncated"] = end - start < total
+    if result["truncated"] and window:
+        result["hint"] = (
+            f"Showing rows {start + 1}-{end} of {total}. Page with offset (from_end=True "
+            "counts from the newest rows); output is capped at about 12,000 characters."
+        )
+    return result
+
+
 # --- Optional: search across all portal products -----------------------------
 
 
@@ -672,7 +841,7 @@ if MEILISEARCH_URL and MEILISEARCH_KEY:
         description=(
             f"Full-text search over all content on {DOMAIN} (articles, reports, tables, "
             "maps, OGD datasets). Use German terms; for a single time series prefer "
-            "search_indicators."
+            "search_indicators. Pass the url of a 'Tabelle' hit to get_table."
         ),
     )(search_portal)
 

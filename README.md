@@ -3,7 +3,8 @@
 MCP server for the statistics portal of the canton of Basel-Stadt
 ([statistik.bs.ch](https://statistik.bs.ch)). It gives chatbots access to the
 ~1'000 indicators of the Indikatorenportal: search, metadata (reading aid,
-explanations, sources) and the underlying time series.
+explanations, sources) and the underlying time series. It also reads the ~220
+web tables (Excel tables of the statistical yearbook) sheet by sheet.
 
 It uses the public JSON endpoints of the statistikportal Nuxt app (see
 [`public/llms.txt`](https://statistik.bs.ch/llms.txt)). No authentication.
@@ -50,7 +51,7 @@ Read from the environment first, else a local `.env` next to `main.py`
 
 | Variable                  | Default           | Meaning                                              |
 |---------------------------|-------------------|------------------------------------------------------|
-| `STATISTIK_PORTAL_DOMAIN` | `statistik.bs.ch` | Portal serving `/api/indikator-*` (e.g. a test host) |
+| `STATISTIK_PORTAL_DOMAIN` | `statistik.bs.ch` | Portal serving `/api/*` (e.g. a test host)           |
 | `INDEX_CACHE_TTL`         | `3600`            | Seconds the indicator index is kept in memory        |
 | `MEILISEARCH_URL`         | –                 | Enables `search_portal` (together with the key)      |
 | `MEILISEARCH_KEY`         | –                 | **Search-only** key for the `product` index          |
@@ -210,10 +211,39 @@ get_indicator_data(indicator_id=5813, max_rows=24)
 Values with counts for `thema`, `unterthema`, `kennzahlenset`,
 `raeumliche_gliederung`, `darstellungsart`.
 
+### `get_table`
+One web table (Webtabelle) via `/api/webtabelle-data/{file}`, where the portal
+already flattens the sheet. Accepts the file name, the table code or the download
+URL from `search_portal`. Returns the sheet list, one sheet as `columns` + `rows`,
+footnotes, the Steckbrief (contact, reference period, …), the Excel `download_url`
+and a `csv_url` for the selected sheet. For citing, `source` and
+`aktualisierungsdatum` are taken from the Steckbrief (`Datenquelle`,
+`Letzte Aktualisierung`; a text such as "Oktober 2026 (Daten September 2026)").
+Multi-row headers are joined into column names
+(`"Schweizer Bevölkerung – Männlich"`), group rows such as `Total` become the
+`Gruppe` column. Numbers are raw values rounded to 6 significant digits (percent
+formats as fractions), placeholders like `…` stay text.
+
+Long sheets are cut to `max_rows` (default 200) and, like `get_indicator_data`, to
+about 12,000 characters; then `truncated: true` and a `hint` say how to page.
+`offset` skips rows and `from_end=True` returns the last rows (time series start
+with the oldest year). `first_row` is the index of the first returned row. An
+unknown table or sheet gives a `ToolError` that names the valid sheets or points to
+`search_portal`.
+
+```
+get_table(table="t06-1-05.xlsx")
+get_table(table="t03.4.04", max_rows=12, from_end=True)
+get_table(table="t10.1.04", sheet="Jul")
+get_table(table="https://statistik.bs.ch/files/webtabellen/t01-1-02.xlsx", sheet="Riehen")
+```
+
 ### `search_portal` (optional)
 Only registered when `MEILISEARCH_URL` and `MEILISEARCH_KEY` are set. Full-text
 search over all portal content (articles, web tables, maps, dashboards, OGD
-datasets, indicators) via the portal's Meilisearch `product` index.
+datasets, indicators) via the portal's Meilisearch `product` index. Web table
+hits (`type: "Tabelle"`) can be passed to `get_table`; without Meilisearch,
+`get_table` needs a known file name or table code.
 
 ## Skills (no MCP needed)
 
