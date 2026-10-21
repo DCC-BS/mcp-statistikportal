@@ -225,6 +225,7 @@ async def test_search_hits_are_citable(mock_fetch):
     assert hit["unit"] == "%"
     assert hit["aktualisierungsdatum"] == "2026-09-07T00:00:00"
     assert hit["portal_url"].endswith("/indikatorenportal/7510")
+    assert hit["citation_label"].startswith(f"{main.DOMAIN} · Arbeitslosenquote nach Alter")
 
 
 @pytest.mark.anyio
@@ -308,6 +309,7 @@ async def test_data_carries_unit_source_notes_and_latest(mock_fetch):
     assert result["source"] == ["Statistisches Amt Basel-Stadt, Leerstandserhebung"]
     assert result["portal_url"] == main._portal_url(5813)
     assert result["title"] == "Leerwohnungsquote"
+    assert result["citation_label"] == f"{main.DOMAIN} · Leerwohnungsquote, in Prozent, Basel-Stadt"
     assert result["notes"] == "Stichtag 1. Juni. Bruch 2020 & neu. Die Quote liegt 2026 bei 0,78%."
     assert result["latest"] == {
         "period_label": "Jahr",
@@ -393,3 +395,24 @@ async def test_html_is_cleaned_in_titles_headers_and_cells(mock_fetch):
     assert result["headers"] == ["Jahr", "Wert in m²"]
     assert result["rows"] == [[2025, 5]]
     assert "<" not in result["note"]
+
+
+def test_citation_label():
+    import main
+
+    assert (
+        main.citation_label("Leerwohnungsquote", "in Prozent")
+        == f"{main.DOMAIN} · Leerwohnungsquote, in Prozent"
+    )
+    assert main.citation_label("<b>Bevölkerung</b>") == f"{main.DOMAIN} · Bevölkerung"
+    assert main.citation_label("") is None
+
+
+def test_instructions_route_but_do_not_prescribe_a_citation_format():
+    import main
+
+    text = main.mcp.instructions
+    assert "search_indicators" in text and "get_table" in text
+    # Open WebUI appends these to every system message; a "link portal_url" rule made the model write
+    # Markdown links instead of the client's citation markers.
+    assert "link portal_url" not in text and "Always cite" not in text
