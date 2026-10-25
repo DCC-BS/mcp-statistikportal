@@ -108,8 +108,8 @@ mcp = MCPServer(
         "explanation with get_indicator, then load the time series with "
         "get_indicator_data. For the web tables of the statistical yearbook (Excel "
         "tables with several sheets) use get_table, e.g. with a table found by "
-        "search_portal. Always cite the source (quellenangabe or the Steckbrief) and "
-        "link portal_url or download_url."
+        "search_portal. Every result carries its source, portal_url or download_url and "
+        "aktualisierungsdatum."
     ),
 )
 
@@ -192,6 +192,15 @@ def _parse_links(values) -> list[dict]:
     return links
 
 
+def citation_label(title, subtitle=None) -> str | None:
+    """Short name of a result for a client's citation list: portal, title and subtitle."""
+    title = _clean_inline(title)
+    if not title:
+        return None
+    subtitle = _clean_inline(subtitle)
+    return f"{DOMAIN} · {title}" + (f", {subtitle}" if subtitle else "")
+
+
 def _portal_url(indicator_id) -> str:
     return f"{BASE_URL}/indikatorenportal/{indicator_id}"
 
@@ -252,6 +261,7 @@ def _simplify_indicator(data: dict) -> dict:
         "darstellungsart": data.get("darstellungsart"),
         "aktualisierungsdatum": data.get("aktualisierungsdatum"),
         "portal_url": _portal_url(data.get("id")),
+        "citation_label": citation_label(data.get("title"), data.get("subtitle")),
     }
 
 
@@ -552,6 +562,7 @@ async def get_indicator_data(indicator_id: int | str, max_rows: int = 200) -> di
         "aktualisierungsdatum": meta.get("aktualisierungsdatum"),
         "source": [_clean_inline(q) for q in meta.get("quellenangabe") or []],
         "portal_url": _portal_url(indicator_id),
+        "citation_label": citation_label(meta.get("title"), meta.get("subtitle")),
         "notes": _notes(meta),
         "headers": headers,
         "total_rows": len(rows),
@@ -736,6 +747,7 @@ async def get_table(
         "source": steckbrief.get("Datenquelle"),
         "aktualisierungsdatum": steckbrief.get("Letzte Aktualisierung"),
         "download_url": f"{BASE_URL}/files/webtabellen/{file}",
+        "citation_label": citation_label(data.get("title")),
         "sheets": [
             {"index": i, "name": s.get("name"), "kind": s.get("kind")} for i, s in enumerate(sheets)
         ],
@@ -813,6 +825,7 @@ def _simplify_product(hit: dict) -> dict:
         "published": hit.get("publikationsdatum"),
         "indicator_id": hit.get("stata_id") if hit.get("produkt") == "Indikator" else None,
         "url": url,
+        "citation_label": citation_label(hit.get("bezeichnung")),
     }
 
 
