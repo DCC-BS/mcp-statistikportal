@@ -800,15 +800,49 @@ async def get_table(
 # --- Optional: search across all portal products -----------------------------
 
 
+_PORTAL_SEARCH_FALLBACK = (
+    "Use search_indicators for indicators, or get_table with a known table code such as t11.1.01."
+)
+
+
 async def meili_search(index: str, body: dict) -> dict:
-    async with httpx.AsyncClient(base_url=MEILISEARCH_URL, timeout=30.0) as client:
-        response = await client.post(
-            f"/indexes/{index}/search",
-            json=body,
-            headers={"Authorization": f"Bearer {MEILISEARCH_KEY}"},
+    """POST a search to Meilisearch. Failures are raised as ToolError that name the
+    cause and a fallback tool, so the model switches tools instead of retrying."""
+    try:
+        async with httpx.AsyncClient(base_url=MEILISEARCH_URL, timeout=30.0) as client:
+            response = await client.post(
+                f"/indexes/{index}/search",
+                json=body,
+                headers={"Authorization": f"Bearer {MEILISEARCH_KEY}"},
+            )
+    except httpx.TimeoutException as exc:
+        raise ToolError(
+            f"Portal search unavailable (no answer within 30 s). {_PORTAL_SEARCH_FALLBACK}"
+        ) from exc
+    except httpx.HTTPError as exc:
+        raise ToolError(
+            f"Portal search unavailable ({type(exc).__name__}). {_PORTAL_SEARCH_FALLBACK}"
+        ) from exc
+    if response.status_code == 400:
+        # Meilisearch explains rejected queries, e.g. an unknown filter value.
+        try:
+            reason = response.json().get("message", "")
+        except ValueError:
+            reason = ""
+        raise ToolError(f"Portal search rejected the query: {reason or 'HTTP 400'}")
+    if response.status_code in (401, 403):
+        raise ToolError(
+            f"Portal search unavailable (HTTP {response.status_code}, the server's search "
+            f"key is invalid). {_PORTAL_SEARCH_FALLBACK}"
         )
-        response.raise_for_status()
+    if response.status_code >= 400:
+        raise ToolError(
+            f"Portal search unavailable (HTTP {response.status_code}). {_PORTAL_SEARCH_FALLBACK}"
+        )
+    try:
         return response.json()
+    except ValueError as exc:
+        raise ToolError(f"Portal search returned no JSON. {_PORTAL_SEARCH_FALLBACK}") from exc
 
 
 def _simplify_product(hit: dict) -> dict:
